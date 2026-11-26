@@ -1,0 +1,70 @@
+trigger: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: avd-foundation-vars
+
+stages:
+  - stage: Plan
+    jobs:
+      - job: TerraformPlan
+        steps:
+          - template: templates/terraform-install.yml
+
+          - template: templates/terraform-security-scan.yml
+            parameters:
+              workingDirectory: 'terraform/foundation'
+              
+          - template: templates/azure-auth.yml
+            parameters:
+              workingDirectory: 'terraform/foundation'
+              terraformCommand: |
+                export TF_VAR_rg_name="$(rg_name)"
+                export TF_VAR_location="$(location)"
+                export TF_VAR_vnet_name="$(vnet_name)"
+                export TF_VAR_subnet_name="$(subnet_name)"
+                export TF_VAR_workspace_name="$(workspace_name)"
+                export TF_VAR_workspace_name_avd="$(workspace_name_avd)"
+                export TF_VAR_hostpool_name="$(hostpool_name)"
+                export TF_VAR_appgroup_name="$(appgroup_name)"
+                export TF_VAR_keyvault_name="$(keyvault_name)"
+                
+                # --- NEW IP VARIABLES ADDED HERE ---
+                export TF_VAR_vnet_address_space="$(vnet_address_space)"
+                export TF_VAR_subnet_address_prefix="$(subnet_address_prefix)"
+                
+                # --- MATCHING EXACT FILE NAME FROM AZURE STORAGE ---
+                terraform init -backend-config="key=foundation.tfstate"
+                
+                echo "Validating Terraform code..."
+                terraform validate
+                
+                terraform plan -out=tfplan
+          
+          - publish: '$(System.DefaultWorkingDirectory)/terraform/foundation/tfplan'
+            artifact: foundation_plan
+
+  - stage: Apply
+    dependsOn: Plan
+    jobs:
+      - deployment: TerraformApply
+        environment: 'AVD-Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self 
+                - download: current
+                  artifact: foundation_plan
+                - template: templates/terraform-install.yml
+                - script: cp $(Pipeline.Workspace)/foundation_plan/tfplan $(System.DefaultWorkingDirectory)/terraform/foundation/tfplan
+                  displayName: 'Stage Plan File'
+                - template: templates/azure-auth.yml
+                  parameters:
+                    workingDirectory: 'terraform/foundation'
+                    terraformCommand: |
+                      # --- MATCHING EXACT FILE NAME FROM AZURE STORAGE ---
+                      terraform init -backend-config="key=foundation.tfstate"
+                      terraform apply -auto-approve tfplan

@@ -1,0 +1,18 @@
+# templates/terraform-security-scan.yml
+parameters:
+  - name: workingDirectory
+    type: string
+
+steps:
+  - script: |
+      echo "Checking Terraform code formatting..."
+      terraform fmt -check -recursive
+      
+      echo "Downloading tfsec..."
+      wget -qO tfsec https://github.com/aquasecurity/tfsec/releases/download/v1.28.1/tfsec-linux-amd64
+      chmod +x tfsec
+
+      echo "Running tfsec Security Scan..."
+      ./tfsec . --soft-fail
+    displayName: 'Code Quality & Security Scans'
+    workingDirectory: ${{ parameters.workingDirectory }}

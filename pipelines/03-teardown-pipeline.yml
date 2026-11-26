@@ -1,0 +1,70 @@
+trigger: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: avd-foundation-vars
+  - group: avd-vm-vars
+
+stages:
+  - stage: Destroy_VMs
+    jobs:
+      - job: DestroySessionHosts
+        displayName: 'Phase 1: Destroy Session Hosts'
+        steps:
+          - template: templates/terraform-install.yml
+          - template: templates/azure-auth.yml
+            parameters:
+              workingDirectory: 'terraform/session_hosts'
+              terraformCommand: |
+                export TF_VAR_rg_name="$(rg_name)"
+                export TF_VAR_vnet_name="$(vnet_name)"
+                export TF_VAR_subnet_name="$(subnet_name)"
+                export TF_VAR_keyvault_name="$(keyvault_name)"
+                export TF_VAR_hostpool_name="$(hostpool_name)"
+                export TF_VAR_vm_prefix="$(vm_prefix)"
+                export TF_VAR_vm_size="$(vm_size)"
+                export TF_VAR_admin_username="$(admin_username)"
+                export TF_VAR_admin_password="$(admin_password)"
+                export TF_VAR_appgroup_name="$(appgroup_name)"
+                export TF_VAR_vnet_address_space="$(vnet_address_space)"
+                export TF_VAR_subnet_address_prefix="$(subnet_address_prefix)"
+                
+                # Hardcoded to 0 to bypass dynamic math and ensure total destruction
+                export TF_VAR_total_vm_count=0 
+
+                echo "Waking up any deallocated VMs so Azure permits extension deletion..."
+                VM_IDS=$(az vm list --resource-group "$(rg_name)" --query "[?starts_with(name, '$(vm_prefix)')].id" -o tsv)
+                if [ -n "$VM_IDS" ]; then
+                  az vm start --ids $VM_IDS
+                fi
+
+                terraform init -backend-config="key=vms.tfstate"
+                terraform destroy -auto-approve
+
+  - stage: Destroy_Foundation
+    dependsOn: Destroy_VMs
+    jobs:
+      - job: DestroyControlPlane
+        displayName: 'Phase 2: Destroy Core Infrastructure'
+        steps:
+          - template: templates/terraform-install.yml
+          - template: templates/azure-auth.yml
+            parameters:
+              workingDirectory: 'terraform/foundation'
+              terraformCommand: |
+                export TF_VAR_location="$(location)"
+                export TF_VAR_rg_name="$(rg_name)"
+                export TF_VAR_vnet_name="$(vnet_name)"
+                export TF_VAR_subnet_name="$(subnet_name)"
+                export TF_VAR_keyvault_name="$(keyvault_name)"
+                export TF_VAR_workspace_name="$(workspace_name)"
+                export TF_VAR_hostpool_name="$(hostpool_name)"
+                export TF_VAR_workspace_name_avd="$(workspace_name_avd)"
+                export TF_VAR_appgroup_name="$(appgroup_name)"
+                export TF_VAR_vnet_address_space="$(vnet_address_space)"
+                export TF_VAR_subnet_address_prefix="$(subnet_address_prefix)"
+
+                terraform init -backend-config="key=foundation.tfstate"
+                terraform destroy -auto-approve
